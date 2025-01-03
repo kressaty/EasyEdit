@@ -4,6 +4,7 @@ import logging
 import os
 
 import yaml
+import torch
 
 
 def get_handler(path, log_name):
@@ -41,3 +42,21 @@ def get_handler(path, log_name):
 #     print(f"Results will be stored at {run_dir}")
 #
 #     return run_dir
+
+def torch_device_alias(device_id=None, auto_device=True):
+    if device_id is not None:
+        if isinstance(device_id, int) and device_id >= 0:
+            if torch.cuda.is_available():
+                return f'cuda:{device_id}'
+            elif torch.backends.mps.is_available():
+                return 'mps'
+            else:
+                return 'cpu'
+        elif device_id == 'mps' and torch.backends.mps.is_available():
+            return 'mps'
+    if auto_device:
+        if torch.cuda.is_available():
+            return 'cuda'
+        elif torch.backends.mps.is_available():
+            return 'mps'
+    return 'cpu'

@@ -47,7 +47,7 @@ def main():
     args = parser.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    model = AutoModelForCausalLM.from_pretrained(args.model_name).eval().cuda()
+    model = AutoModelForCausalLM.from_pretrained(args.model_name).eval().mps()
     set_requires_grad(False, model)
 
     for layer_num in args.layers:
@@ -113,7 +113,6 @@ def layer_stats(
             maxlen = model.config.seq_length
         else:
             raise NotImplementedError
-                
         if hasattr(model.config, 'model_type') and 'mistral' in model.config.model_type:
             if hasattr(model.config, 'sliding_window') and model.config.sliding_window:
                 maxlen = model.config.sliding_window or 4096
@@ -127,7 +126,6 @@ def layer_stats(
         return TokenizedDataset(raw_ds["train"], tokenizer, maxlen=maxlen)
 
     # Continue with computation of statistics
-    batch_size = 100  # Examine this many dataset texts at once
     if hasattr(model.config, 'n_positions'):
         npos = model.config.n_positions
     elif hasattr(model.config, 'max_sequence_length'):
@@ -138,7 +136,7 @@ def layer_stats(
         npos = model.config.seq_length
     else:
         raise NotImplementedError
-        
+
     if hasattr(model.config, 'model_type') and 'mistral' in model.config.model_type:
         if hasattr(model.config, 'sliding_window') and model.config.sliding_window:
             npos = model.config.sliding_window or 4096
@@ -171,6 +169,10 @@ def layer_stats(
         progress = lambda x: x
 
     stat = CombinedStat(**{k: STAT_TYPES[k]() for k in to_collect})
+
+    batch_size = 1000  # Examine this many dataset texts at once
+    chunk_size = 256
+
     loader = tally(
         stat,
         ds,
@@ -180,21 +182,23 @@ def layer_stats(
         collate_fn=length_collation(batch_tokens),
         pin_memory=True,
         random_sample=1,
-        num_workers=2,
+        num_workers=0, # jk: 0
     )
     batch_count = -(-(sample_size or len(ds)) // batch_size)
     with torch.no_grad():
         for batch_group in progress(loader, total=batch_count):
             for batch in batch_group:
-                batch = dict_to_(batch, f"cuda:{hparams.device}")
+                batch = dict_to_(batch, "mps")
                 with Trace(
                     model, layer_name, retain_input=True, retain_output=False, stop=True
                 ) as tr:
                     model(**batch)
-                feats = flatten_masked_batch(tr.input, batch["attention_mask"])
-                # feats = flatten_masked_batch(tr.output, batch["attention_mask"])
-                feats = feats.to(dtype=dtype)
-                stat.add(feats)
+                feats = flatten_masked_batch(tr.input, batch["attention_mask"]).to(dtype=torch.float32)
+                for start in range(0, feats.size(0), chunk_size):
+                    end = min(start + chunk_size, feats.size(0))
+                    stat.add(feats[start:end])
+                # del feats, batch, tr  # Clear memory
+                torch.mps.empty_cache()  # Clear cache
     return stat
 
 

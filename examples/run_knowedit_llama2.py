@@ -243,7 +243,7 @@ if __name__ == "__main__":
         pre_edit = None
     if args.editing_method == 'IKE':
         train_ds = KnowEditDataset(args.train_data_path)
-        sentence_model = SentenceTransformer(hparams.sentence_model_name).to(f'cuda:{hparams.device}')
+        sentence_model = SentenceTransformer(hparams.sentence_model_name).to('mps')
         encode_ike_facts(sentence_model, train_ds, hparams)
     elif args.editing_method == 'ICE':
         hparams.use_icl_examples = False

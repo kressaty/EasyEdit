@@ -15,7 +15,7 @@ def apply_wise_to_model(
 ) -> Tuple[AutoModelForCausalLM, Dict[str, Any]]:
     if copy:
         model = deepcopy(model)
-    device = f'cuda:{hparams.device}'
+    device = "mps"
     context_templates = get_context_templates(model, tok, length_params=[[5,5], [10,5]], device=device)
     editor = WISE(model=model, config=hparams, device=device)
     import os

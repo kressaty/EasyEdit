@@ -3,6 +3,7 @@ Contains evaluation utilities for pytorch-based rewriting methods.
 To use, simply call `compute_rewrite_quality_zsre` with the
 appropriate arguments, which returns a dictionary containing them.
 """
+from ..util.globals import torch_device_alias
 from ..models.melo.melo import LORA
 
 import typing
@@ -313,7 +314,7 @@ def icl_lm_eval(
         x,
         neighborhood=False
 )-> typing.Dict:
-    device = torch.device(f'cuda:{hparams.device}')
+    device = torch.device(torch_device_alias(hparams.device))
     if 't5' in model_name.lower():
         target_len = len(tokenizer.encode(target))
         target_ids = tokenizer(f'{x} {target}', return_tensors='pt')['input_ids'].to(device)

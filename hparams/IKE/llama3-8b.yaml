@@ -1,8 +1,8 @@
 alg_name: "IKE"
 model_name: "./hugging_cache/llama-3-8b"
-sentence_model_name: "./hugging_cache/all-MiniLM-L6-v2"
-device: 0
+sentence_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+device: 'mps'
 results_dir: "./results"
 
-k: 16
+k: 1
 model_parallel: false

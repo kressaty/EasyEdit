@@ -43,7 +43,7 @@ class MendRewriteExecutor:
         # if params.model_parallel:
         self.alg.mend.to(deque(self.alg.model.parameters(), maxlen=1)[0].device)
         # else:
-        #     self.alg.to(torch.device(f'cuda:{params.device}'))
+        #     self.alg.to(torch.device('mps'))
 
         # Disable unneeded gradients
         for n, p in self.model.named_parameters():
@@ -96,10 +96,10 @@ class MendRewriteExecutor:
 
         # Tokenize
         sent_tok = self.tokenizer(sentences, padding=True, return_tensors="pt").to(
-            f"cuda:{hparams.device}"
+            'mps'
         )
         target_tok = self.tokenizer(targets, padding=True, return_tensors="pt").to(
-            f"cuda:{hparams.device}"
+            'mps'
         )
 
         # Define labels
@@ -174,7 +174,7 @@ class MendMultimodalRewriteExecutor(MendRewriteExecutor):
         self.alg.load_state_dict(
             {k.replace("gtn.", "mend."): v for k, v in d["model"].items()}
         )
-        self.alg.to(torch.device(f'cuda:{params.device}'))
+        self.alg.to(torch.device('mps'))
 
         # Disable unneeded gradients
         for n, p in self.model.named_parameters():

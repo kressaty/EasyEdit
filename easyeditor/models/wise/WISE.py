@@ -220,6 +220,10 @@ class WISE(torch.nn.Module):
 
             self.get_adapter_layer().merge_weight()
             print(f'Merge Weight of (New, Original) Matrix... with {self.config.merge_alg}')
+        else:
+            self.get_adapter_layer().layer.weight = torch.nn.Parameter(
+                self.get_adapter_layer().new_weight.clone(), requires_grad=False
+            )
 
     def __norm_constraint(self, norm_constraint):
         new_weight = self.get_adapter_layer().new_weight

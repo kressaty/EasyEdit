@@ -47,7 +47,7 @@ def execute_qlora(
     model.enable_input_require_grads()
 
     # hparams.device = 1
-    device = torch.device(f"cuda:{hparams.device}")
+    device = torch.device('mps')
     model.to(device)
 
     # Prepare data

@@ -1,11 +1,11 @@
 alg_name: "WISE"
 model_name: "./hugging_cache/llama-3-8b-instruct"
 
-device: 0
+device: 'mps'
 
 mask_ratio: 0.2
 edit_lr: 0.9
-n_iter: 30
+n_iter: 20
 norm_constraint: 1.0
 act_margin: [2.0, 20.0, 10.0] # alpha, beta, gamma
 act_ratio: 0.5

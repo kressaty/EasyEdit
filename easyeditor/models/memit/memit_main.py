@@ -47,7 +47,7 @@ def apply_memit_to_model(
 
     with torch.no_grad():
         for w_name, (key_mat, val_mat) in deltas.items():
-            key_mat, val_mat = key_mat.to(f"cuda:{hparams.device}"), val_mat.to(f"cuda:{hparams.device}")
+            key_mat, val_mat = key_mat.to("mps"), val_mat.to("mps")
             upd_matrix = key_mat @ val_mat.T
             w = nethook.get_parameter(model, w_name)
             upd_matrix = upd_matrix_match_shape(upd_matrix, w.shape)
@@ -127,7 +127,7 @@ def execute_memit(
         ):
             try:
                 data = np.load(cache_fname)
-                z_list.append(torch.from_numpy(data["v_star"]).to(f"cuda:{hparams.device}"))
+                z_list.append(torch.from_numpy(data["v_star"]).to("mps"))
                 data_loaded = True
             except Exception as e:
                 print(f"Error reading cache file due to {e}. Recomputing...")
@@ -230,7 +230,7 @@ def execute_memit(
         for x in [layer_ks, cur_zs, targets]:
             x.cpu()
             del x
-        torch.cuda.empty_cache()
+        torch.mps.empty_cache()
 
     # Restore state of original model
     with torch.no_grad():
@@ -278,7 +278,7 @@ def get_cov(
         COV_CACHE[key] = stat.mom2.moment().float().to("cpu")
 
     return (
-        torch.inverse(COV_CACHE[key].to(f"cuda:{hparams.device}")) if inv else COV_CACHE[key].to(f"cuda:{hparams.device}")
+        torch.inverse(COV_CACHE[key].to("mps")) if inv else COV_CACHE[key].to("mps")
     )
 
 

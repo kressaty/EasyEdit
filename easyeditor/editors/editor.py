@@ -140,7 +140,7 @@ class BaseEditor:
         if hparams.model_parallel: 
             hparams.device = str(self.model.device).split(":")[1]
         if not hparams.model_parallel and hasattr(hparams, 'device') and hparams.alg_name != 'QLoRA':
-            self.model.to(f'cuda:{hparams.device}')
+            self.model.to(torch_device_alias(hparams.device))
 
         self.hparams = hparams
 
@@ -259,7 +259,7 @@ class BaseEditor:
             else:
                 with torch.no_grad():
                     for k, v in weights_copy.items():
-                        nethook.get_parameter(self.model, k)[...] = v.to(f"cuda:{self.hparams.device}")
+                        nethook.get_parameter(self.model, k)[...] = v.to(torch_device_alias(self.hparams.device))
 
             for i, request in enumerate(record_chunks):
                 chunk_metrics[i]["pre"] = compute_edit_quality(self.model, self.model_name, self.hparams, self.tok, request, self.hparams.device, test_generation=test_generation)
@@ -387,7 +387,7 @@ class BaseEditor:
                 else:
                     with torch.no_grad():
                         for k, v in weights_copy.items():
-                            nethook.get_parameter(self.model, k)[...] = v.to(f"cuda:{self.hparams.device}")
+                            nethook.get_parameter(self.model, k)[...] = v.to(torch_device_alias(self.hparams.device))
 
 
         if isinstance(edited_model, LORA):
@@ -439,7 +439,7 @@ class BaseEditor:
 
         with torch.no_grad():
             for k, v in weights_copy.items():
-                nethook.get_parameter(self.model, k)[...] = v.to(f"cuda:{self.hparams.device}")
+                nethook.get_parameter(self.model, k)[...] = v.to(torch_device_alias(self.hparams.device))
 
         return None, edited_model, weights_copy
     
@@ -488,7 +488,7 @@ class BaseEditor:
                 tokenize=False,
                 add_generation_prompt=True,
             )
-            model_inputs = tok.encode(text, return_tensors="pt").to(f"cuda:{device}")
+            model_inputs = tok.encode(text, return_tensors="pt").to(torch_device_alias(device))
             template_length = len(model_inputs[0])
             generated_ids = model.generate(
                 input_ids=model_inputs,
@@ -602,7 +602,7 @@ class BaseEditor:
                 else:
                     with torch.no_grad():
                         for k, v in weights_copy.items():
-                            nethook.get_parameter(self.model, k)[...] = v.to(f"cuda:{self.hparams.device}")
+                            nethook.get_parameter(self.model, k)[...] = v.to(torch_device_alias(self.hparams.device))
 
         if isinstance(edited_model, LORA):
             edited_model = edited_model.model

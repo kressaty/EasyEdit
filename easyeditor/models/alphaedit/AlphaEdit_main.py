@@ -24,50 +24,77 @@ P_loaded = False
 cache_c_new = False
 
 def apply_AlphaEdit_to_model(
-    model: AutoModelForCausalLM,
-    tok: AutoTokenizer,
-    requests: List[Dict],
-    hparams: AlphaEditHyperParams,
-    copy=False,
-    return_orig_weights=False,
-    cache_template: Optional[str] = None,
-    keep_original_weight=False,
-    **kwargs
+        model: AutoModelForCausalLM,
+        tok: AutoTokenizer,
+        requests: List[Dict],
+        hparams: AlphaEditHyperParams,
+        copy=False,
+        return_orig_weights=False,
+        cache_template: Optional[str] = None,
+        keep_original_weight=False,
+        **kwargs
 ) -> Dict[str, Tuple[torch.Tensor]]:
-  #-> Tuple[AutoModelForCausalLM, Dict[str, Any]]:
-    """
-    Returns a model with the desired changes.
-    :param copy: If true, will preserve the original model while creating a new one to edit.
-        Note that you are responsible for deallocating the new model's memory to avoid leaks.
-    :return: (1) the updated model, (2) an original copy of the weights that changed
-    """
-
     global P, P_loaded, cache_c, cache_c_new
 
     weights_copy = {}
     if copy:
         model = deepcopy(model)
-    
-    # Calculate the null-space projection matrix P
-    # Please ensure that you have downloaded "null_space_project.pt" to the easyedit folder beforehand, or get the P by following calculation
+
+    device = torch.device(torch_device_alias(hparams.device))
+
     if not os.path.exists(hparams.P_loc):
-        print(f"The null-space projection matrix P does not exist and now calculate.")
+        print(f"The null-space projection matrix P does not exist. Calculating now...")
+
+        # Get the weight matrix for the output layer
         W_out = nethook.get_parameter(model, f"{hparams.rewrite_module_tmp.format(hparams.layers[-1])}.weight")
-        if "llama" in hparams.model_name.lower() or "gpt-j-6b" in hparams.model_name.lower():
-            P = torch.zeros((len(hparams.layers), W_out.shape[1], W_out.shape[1]), device="cpu")
-        elif "gpt2-xl" in hparams.model_name.lower():
-            P = torch.zeros((len(hparams.layers), W_out.shape[0], W_out.shape[0]), device="cpu")
-        del W_out
+        P_files = []
+
         for i, layer in enumerate(hparams.layers):
-            P[i,:,:] = get_project(model, tok, layer, hparams)
-        torch.save(P, "null_space_project.pt")
+            print(f"Calculating projection matrix for layer {i + 1}/{len(hparams.layers)}...")
+
+            # Determine the shape of the projection matrix based on the model type
+            if "llama" in hparams.model_name.lower() or "gpt-j-6b" in hparams.model_name.lower():
+                layer_shape = (W_out.shape[1], W_out.shape[1])
+            elif "gpt2-xl" in hparams.model_name.lower():
+                layer_shape = (W_out.shape[0], W_out.shape[0])
+            else:
+                raise ValueError(f"Unknown model type: {hparams.model_name}")
+
+            # Initialize a zero matrix with the correct shape on the desired device
+            layer_P = torch.zeros(layer_shape, device=torch_device_alias(hparams.device))
+
+            # Calculate the actual projection matrix and assign it to the initialized matrix
+            calculated_P = get_project(model, tok, layer, hparams).to(torch_device_alias(hparams.device))
+
+            # Force the correct shape by copying the calculated matrix
+            layer_P[:calculated_P.shape[0], :calculated_P.shape[1]] = calculated_P
+
+            # Save the current layer's projection matrix to a file (CPU)
+            layer_file = f"null_space_project_layer_{i}.pt"
+            torch.save(layer_P.to("cpu"), layer_file)
+            P_files.append(layer_file)
+
+            # Clear memory for the next layer
+            del layer_P, calculated_P
+
+            # Clear MPS memory if needed
+            torch[torch_device_alias(hparams.device)].empty_cache()
+
+        # Combine all layer matrices into one tensor and save
+        print("Combining layer matrices into a single file...")
+        P_combined = torch.stack([torch.load(f, map_location="cpu") for f in P_files], dim=0)
+        torch.save(P_combined, hparams.P_loc)
+
+        # Clean up intermediate files
+        for f in P_files:
+            os.remove(f)
+
         P_loaded = True
-    elif P_loaded == False:
-        P = torch.load(hparams.P_loc)
+    elif not P_loaded:
+        # Load the existing projection matrix from disk
+        P = torch.load(hparams.P_loc, map_location=device)
         P_loaded = True
 
-    # Maintain the global variable cache_c to avoid redundant computations.
-    # If this is the first calculation (i.e., cache_c_new == false), then initialize cache_c first
     if not cache_c_new:
         W_out = nethook.get_parameter(model, f"{hparams.rewrite_module_tmp.format(hparams.layers[-1])}.weight")
         if "llama" in hparams.model_name.lower() or "gpt-j-6b" in hparams.model_name.lower():
@@ -76,18 +103,19 @@ def apply_AlphaEdit_to_model(
             cache_c = torch.zeros((len(hparams.layers), W_out.shape[0], W_out.shape[0]), device="cpu")
         del W_out
         cache_c_new = True
-    
+
     deltas = execute_AlphaEdit(model, tok, requests, hparams, cache_template=cache_template)
 
     with torch.no_grad():
         for w_name, upd_m in deltas.items():
-            upd_matrix = upd_m.to(f"cuda:{hparams.device}")
+            upd_matrix = upd_m.to(torch_device_alias(hparams.device))
             w = nethook.get_parameter(model, w_name)
             upd_matrix = upd_matrix_match_shape(upd_matrix, w.shape)
 
             if return_orig_weights and w_name not in weights_copy:
                 weights_copy[w_name] = w.detach().clone()
             w[...] += upd_matrix.float()
+            print(f"Updated weights for {w_name}")
 
     print(f"New weights successfully inserted into {list(deltas.keys())}")
 
@@ -157,7 +185,7 @@ def execute_AlphaEdit(
         ):
             try:
                 data = np.load(cache_fname)
-                z_list.append(torch.from_numpy(data["v_star"]).to(f"cuda:{hparams.device}"))
+                z_list.append(torch.from_numpy(data["v_star"]).to(torch_device_alias(hparams.device)))
                 data_loaded = True
             except Exception as e:
                 print(f"Error reading cache file due to {e}. Recomputing...")
@@ -210,10 +238,13 @@ def execute_AlphaEdit(
         repeat_factor = (layer_ks.size(1) // targets.size(1))
         targets = targets.repeat_interleave(repeat_factor, dim=1)
         resid = targets / (len(hparams.layers) - i)  # Distribute residual across layers
+        # kressaty removed to support mps, TODO: MAKE FALLBACK
         upd_matrix = torch.linalg.solve(
-                P[i,:,:].to(f"cuda:{hparams.device}") @ (layer_ks.to(f"cuda:{hparams.device}") @ layer_ks.T.to(f"cuda:{hparams.device}") + cache_c[i,:,:].to(f"cuda:{hparams.device}")) + hparams.L2*torch.eye(layer_ks.shape[0], dtype=torch.float,device=f"cuda:{hparams.device}"),
-                P[i,:,:].to(f"cuda:{hparams.device}") @ layer_ks.to(f"cuda:{hparams.device}") @ resid.T.to(f"cuda:{hparams.device}")
+            P[i,:,:].to("cpu") @ (layer_ks.to("cpu") @ layer_ks.T.to("cpu") + cache_c[i,:,:].to("cpu")) + hparams.L2*torch.eye(layer_ks.shape[0], dtype=torch.float,device="cpu"),
+            P[i,:,:].to("cpu") @ layer_ks.to("cpu") @ resid.T.to("cpu")
         )
+
+        upd_matrix = upd_matrix.to(torch_device_alias(hparams.device))
 
         # Adjust update matrix shape
         weight_name = f"{hparams.rewrite_module_tmp.format(layer)}.weight"
@@ -234,13 +265,13 @@ def execute_AlphaEdit(
         for x in [layer_ks, cur_zs, targets]:
             x.cpu()
             del x
-        torch.cuda.empty_cache()
+        torch[torch_device_alias(hparams.device)].empty_cache()
     
     for i, layer in enumerate(hparams.layers):
         layer_ks = compute_ks(model, tok, requests, hparams, layer, context_templates).T
         cache_c[i,:,:] += layer_ks.cpu() @ layer_ks.cpu().T
 
-    # Restore state of original model
+    # todo: do we need to remove this?
     with torch.no_grad():
         for k, v in weights.items():
             v[...] = weights_copy[k]
@@ -251,19 +282,18 @@ def execute_AlphaEdit(
 
 
 def get_cov(
-    model: AutoModelForCausalLM,
-    tok: AutoTokenizer,
-    layer_name: str,
-    mom2_dataset: str,
-    mom2_n_samples: str,
-    mom2_dtype: str,
-    inv: bool = False,
-    force_recompute: bool = False,
-    hparams=None,
+        model: AutoModelForCausalLM,
+        tok: AutoTokenizer,
+        layer_name: str,
+        mom2_dataset: str,
+        mom2_n_samples: int,
+        mom2_dtype: str,
+        inv: bool = False,
+        force_recompute: bool = False,
+        hparams=None,
 ) -> torch.Tensor:
     """
-    Retrieves covariance statistics, then computes the algebraic inverse.
-    Caches result for future use.
+    Efficiently retrieves or computes the covariance matrix in chunks.
     """
 
     model_name = model.config._name_or_path.replace("/", "_")
@@ -282,11 +312,23 @@ def get_cov(
             precision=mom2_dtype,
             hparams=hparams,
             force_recompute=force_recompute,
+            batch_tokens=2048,
         )
-        COV_CACHE[key] = stat.mom2.moment().float().to("cpu")
+
+        # Compute the covariance matrix in chunks
+        full_cov = stat.mom2.moment().float().to("cpu")
+        chunk_size = 512  # Adjust based on available memory
+        rows, cols = full_cov.shape
+        cov = torch.zeros((rows, cols), dtype=full_cov.dtype)
+
+        for start in range(0, rows, chunk_size):
+            end = min(start + chunk_size, rows)
+            cov[start:end] = full_cov[start:end] @ full_cov.T
+
+        COV_CACHE[key] = cov
 
     return (
-        torch.inverse(COV_CACHE[key].to(f"cuda:{hparams.device}")) if inv else COV_CACHE[key].to(f"cuda:{hparams.device}")
+        torch.inverse(COV_CACHE[key].to(torch_device_alias(hparams.device))) if inv else COV_CACHE[key].to(torch_device_alias(hparams.device))
     )
 
 
@@ -329,6 +371,11 @@ def get_context_templates(model, tok):
     return CONTEXT_TEMPLATES_CACHE
 
 def get_project(model, tok, layer, hparams):
+    """
+    Computes the null-space projection matrix for a given layer.
+    Optimized for memory efficiency with chunked covariance computation.
+    """
+
     force_recompute = False
     cov = get_cov(
         model,
@@ -340,10 +387,19 @@ def get_project(model, tok, layer, hparams):
         else hparams.mom2_n_samples // 10,
         hparams.mom2_dtype,
         force_recompute=force_recompute,
-        hparams=hparams
-    ).cpu()
+        hparams=hparams,
+    ).to(torch_device_alias(hparams.device))  # Keep on MPS for efficiency
+
+    # Compute SVD on MPS
     U, S, _ = torch.linalg.svd(cov, full_matrices=False)
+
+    # Threshold small singular values
     threshold = hparams.nullspace_threshold
     small_singular_indices = (S < threshold).nonzero(as_tuple=True)[0]
-    print(len(small_singular_indices))
-    return U[:, small_singular_indices] @ U[:, small_singular_indices].T
+    print(f"Small singular values count: {len(small_singular_indices)}")
+
+    # Compute projection matrix
+    U_reduced = U[:, small_singular_indices]
+    projection_matrix = U_reduced @ U_reduced.T
+
+    return projection_matrix.to("cpu")  # Return to CPU for saving

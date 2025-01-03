@@ -369,6 +369,9 @@ def get_parameter(model, name):
     for n, p in model.named_parameters():
         if n == name:
             return p
+    if name == "lm_head.weight":
+        lm_head_module = get_module(model, "lm_head")
+        return lm_head_module.weight
     raise LookupError(name)
 
 

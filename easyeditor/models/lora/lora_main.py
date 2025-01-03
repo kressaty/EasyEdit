@@ -5,6 +5,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .lora_hparams import LoRAHyperParams
+from ...util.globals import torch_device_alias
 
 
 def apply_lora_to_model(
@@ -79,7 +80,7 @@ def execute_lora(
             f"Executing LoRA algo for: "
             f"[{request['prompt']}] -> [{request['target_new']}]"
         )
-    device = torch.device(f'cuda:{hparams.device}')
+    device = torch.device(torch_device_alias(hparams.device))
     # Define inputs
     texts = [r["prompt"] for r in requests]
     targets = [r["target_new"] for r in requests]
