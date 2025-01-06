@@ -265,8 +265,16 @@ def execute_AlphaEdit(
         for x in [layer_ks, cur_zs, targets]:
             x.cpu()
             del x
-        torch[torch_device_alias(hparams.device)].empty_cache()
-    
+
+        device_alias = torch_device_alias(hparams.device)
+
+        # empty the cache based on the device alias
+        # if the device alias starts with "cuda"
+        if device_alias.startswith("cuda"):
+            torch.cuda.empty_cache()
+        elif device_alias == "mps":
+            torch.mps.empty_cache()
+
     for i, layer in enumerate(hparams.layers):
         layer_ks = compute_ks(model, tok, requests, hparams, layer, context_templates).T
         cache_c[i,:,:] += layer_ks.cpu() @ layer_ks.cpu().T
